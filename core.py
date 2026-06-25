@@ -235,12 +235,27 @@ def aplicar_mapeamento(df: pd.DataFrame, mp: dict) -> pd.DataFrame:
 # Geração das planilhas por contrato
 # ════════════════════════════════════════════════════════════════════════
 def build_xlsx_contrato(nome_contrato: str, df_contrato: pd.DataFrame) -> bytes:
-    """Gera .xlsx em memória com NOME | CPF | VALOR + estilo + linha de TOTAL."""
+    """
+    Gera .xlsx em memória com estilo + linha de TOTAL.
+
+    - Contratos normais: NOME | CPF | VALOR        (3 colunas)
+    - SEM_CONTRATO:      NOME | CPF | POSTO | VALOR (4 colunas — mostra o
+      posto de cada colaborador para facilitar o cadastro no Mapeamento)
+    """
+    # Define se este arquivo é o "SEM_CONTRATO" (mostra coluna POSTO)
+    incluir_posto = (nome_contrato.upper().strip() == "SEM_CONTRATO")
+
+    if incluir_posto:
+        headers = ["NOME", "CPF", "POSTO", "VALOR"]
+        col_valor = 4
+    else:
+        headers = ["NOME", "CPF", "VALOR"]
+        col_valor = 3
+    n_cols = len(headers)
+
     wb = Workbook()
     ws = wb.active
     ws.title = safe_filename(nome_contrato)[:31] or "Planilha1"
-
-    headers = ["NOME", "CPF", "VALOR"]
     ws.append(headers)
 
     header_font = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
@@ -248,41 +263,59 @@ def build_xlsx_contrato(nome_contrato: str, df_contrato: pd.DataFrame) -> bytes:
     thin = Side(border_style="thin", color="BFBFBF")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    for col_idx in range(1, 4):
+    # Estilizar cabeçalho
+    for col_idx in range(1, n_cols + 1):
         cell = ws.cell(row=1, column=col_idx)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = border
 
+    # Linhas de dados
     for _, r in df_contrato.iterrows():
-        ws.append([r["NOME"], r["CPF"], r["VALOR"]])
+        if incluir_posto:
+            ws.append([r["NOME"], r["CPF"], r.get("POSTO", ""), r["VALOR"]])
+        else:
+            ws.append([r["NOME"], r["CPF"], r["VALOR"]])
 
+    # Formatação das linhas
     last_row = ws.max_row
     for row in range(2, last_row + 1):
-        ws.cell(row=row, column=2).number_format = "@"
-        ws.cell(row=row, column=3).number_format = 'R$ #,##0.00;[Red]-R$ #,##0.00'
-        for col in range(1, 4):
+        ws.cell(row=row, column=2).number_format = "@"  # CPF como texto
+        ws.cell(row=row, column=col_valor).number_format = 'R$ #,##0.00;[Red]-R$ #,##0.00'
+        for col in range(1, n_cols + 1):
             ws.cell(row=row, column=col).border = border
+            if col == 1:
+                align = "left"
+            elif col == 2:
+                align = "center"
+            elif col == col_valor:
+                align = "right"
+            else:  # coluna POSTO
+                align = "left"
             ws.cell(row=row, column=col).alignment = Alignment(
-                horizontal="left" if col == 1 else ("center" if col == 2 else "right"),
-                vertical="center",
+                horizontal=align, vertical="center",
             )
 
-    # Linha de total
+    # Linha de TOTAL
     total_row = last_row + 1
-    ws.cell(row=total_row, column=1, value="TOTAL").font = Font(bold=True)
-    ws.cell(row=total_row, column=1).alignment = Alignment(horizontal="right")
-    ws.cell(row=total_row, column=1).fill = PatternFill("solid", fgColor="F2F2F2")
-    ws.cell(row=total_row, column=2).fill = PatternFill("solid", fgColor="F2F2F2")
-    total_cell = ws.cell(row=total_row, column=3, value=float(df_contrato["VALOR"].sum()))
+    label_col = col_valor - 1  # célula imediatamente antes do VALOR
+    ws.cell(row=total_row, column=label_col, value="TOTAL").font = Font(bold=True)
+    ws.cell(row=total_row, column=label_col).alignment = Alignment(horizontal="right")
+    for col in range(1, n_cols + 1):
+        ws.cell(row=total_row, column=col).fill = PatternFill("solid", fgColor="F2F2F2")
+    total_cell = ws.cell(row=total_row, column=col_valor, value=float(df_contrato["VALOR"].sum()))
     total_cell.font = Font(bold=True, color=COR_AZUL)
     total_cell.number_format = 'R$ #,##0.00'
-    total_cell.fill = PatternFill("solid", fgColor="F2F2F2")
 
-    ws.column_dimensions["A"].width = 45
-    ws.column_dimensions["B"].width = 16
-    ws.column_dimensions["C"].width = 16
+    # Larguras de coluna
+    ws.column_dimensions["A"].width = 45    # NOME
+    ws.column_dimensions["B"].width = 16    # CPF
+    if incluir_posto:
+        ws.column_dimensions["C"].width = 40    # POSTO
+        ws.column_dimensions["D"].width = 16    # VALOR
+    else:
+        ws.column_dimensions["C"].width = 16    # VALOR
     ws.freeze_panes = "A2"
 
     buf = io.BytesIO()
