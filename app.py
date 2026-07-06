@@ -204,10 +204,18 @@ except Exception as e:
 
 # ────────── Processar Relatório ──────────
 try:
-    df, meta = parse_relatorio_va(relatorio_file)
+    df, meta, fmt_detectado = parse_relatorio_va(relatorio_file)
 except Exception as e:
-    st.error(f"Falha ao processar o Relatório VA: {e}")
+    st.error(f"Falha ao processar a planilha: {e}")
     st.stop()
+
+# Badge do formato detectado
+_labels = {
+    "relatorio_va": "📄 Relatório VA (formato clássico com separadores por posto)",
+    "extrato_beneficios": "📊 Extrato Mapa Benefícios (VA + CF + CB consolidado)",
+}
+st.info(f"**Formato detectado:** {_labels.get(fmt_detectado, fmt_detectado)}")
+
 
 if df.empty:
     st.warning("Nenhuma linha de colaborador foi encontrada no relatório.")
