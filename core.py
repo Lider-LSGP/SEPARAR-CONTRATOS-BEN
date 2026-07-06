@@ -127,13 +127,108 @@ def carregar_mapeamento(file_or_path) -> dict:
     return mp
 
 
-def parse_relatorio_va(file):
+
+def detect_format(raw: pd.DataFrame) -> str:
     """
-    Lê a planilha do Relatório VA e retorna (df_limpo, meta).
-    df_limpo: NOME | CPF | POSTO | VALOR (linhas-lixo removidas).
-    meta: dict com 'periodo', 'codigo_mapa', etc. quando achados.
+    Auto-detecta o formato da planilha de entrada.
+
+    Retorna:
+      - "extrato_beneficios": Extrato Mapa Benefícios (VA+CF+CB consolidado,
+        colunas: Nome do Funcionário | CPF/CNPJ | Posto de Trabalho | Total Benefício (R$))
+      - "relatorio_va": Relatório VA original (com separadores 'Posto de Trabalho:',
+        subtotais e rodapé longo)
     """
-    raw = read_excel_any(file, sheet_name=0, header=None)
+    for i in range(min(5, len(raw))):
+        row_vals = [normalize_text(v) for v in raw.iloc[i].tolist()]
+        row_text = " | ".join(row_vals)
+        # Extrato: cabeçalho tem "NOME DO FUNCIONARIO" + "BENEFICIO"
+        if "NOME DO FUNCIONARIO" in row_text and "BENEFICIO" in row_text:
+            return "extrato_beneficios"
+        # Relatório VA: NOME + CPF + LOTE juntos
+        if "NOME" in row_vals and "CPF" in row_vals and "LOTE" in row_vals:
+            return "relatorio_va"
+    return "relatorio_va"  # default (mantém compatibilidade)
+
+
+def parse_extrato_beneficios(raw: pd.DataFrame):
+    """
+    Parser do 'Extrato Mapa Benefícios' (formato consolidado VA+CF+CB).
+
+    Layout esperado:
+      Col 0: Nome do Funcionário
+      Col 1: CPF/CNPJ
+      Col 2: Posto de Trabalho
+      Col 3: Total Benefício (R$)
+
+    Só há 1 linha de rodapé ("TOTAL GERAL:"), sem separadores nem subtotais.
+    """
+    # Achar linha do cabeçalho
+    header_row = 0
+    for i in range(min(5, len(raw))):
+        row_vals = [normalize_text(v) for v in raw.iloc[i].tolist()]
+        if "NOME DO FUNCIONARIO" in row_vals:
+            header_row = i
+            break
+
+    header_vals = [normalize_text(v) for v in raw.iloc[header_row].tolist()]
+
+    def find_col(*names):
+        for nm in names:
+            if nm in header_vals:
+                return header_vals.index(nm)
+        for nm in names:  # busca parcial (fallback)
+            for i, h in enumerate(header_vals):
+                if nm in h:
+                    return i
+        return None
+
+    idx_nome = find_col("NOME DO FUNCIONARIO", "NOME")
+    idx_cpf = find_col("CPF/CNPJ", "CPF")
+    idx_posto = find_col("POSTO DE TRABALHO", "POSTO TRABALHO", "POSTO")
+    idx_valor = find_col("TOTAL BENEFICIO (R$)", "TOTAL BENEFICIO", "BENEFICIO", "VALOR")
+
+    if any(v is None for v in (idx_nome, idx_cpf, idx_posto, idx_valor)):
+        raise ValueError(
+            "Cabeçalho não reconhecido no Extrato de Benefícios. Esperado: "
+            "Nome do Funcionário, CPF/CNPJ, Posto de Trabalho, Total Benefício (R$)."
+        )
+
+    body = raw.iloc[header_row + 1:].reset_index(drop=True)
+
+    rows = []
+    for i in range(len(body)):
+        nome_raw = body.iat[i, idx_nome]
+        cpf_raw = body.iat[i, idx_cpf]
+        posto_raw = body.iat[i, idx_posto]
+        valor_raw = body.iat[i, idx_valor]
+
+        # Rodapé "TOTAL GERAL:" — NOME/CPF vazios
+        nome_vazio = nome_raw is None or (isinstance(nome_raw, float) and pd.isna(nome_raw))
+        cpf_vazio = cpf_raw is None or (isinstance(cpf_raw, float) and pd.isna(cpf_raw))
+        if nome_vazio and cpf_vazio:
+            continue
+        posto_str = str(posto_raw or "").strip().upper()
+        if "TOTAL GERAL" in posto_str or "TOTAL/GERAL" in posto_str:
+            continue
+
+        rows.append({
+            "NOME": str(nome_raw).strip() if not pd.isna(nome_raw) else "",
+            "CPF": normalize_cpf(cpf_raw),
+            "POSTO": str(posto_raw).strip() if posto_raw is not None and not pd.isna(posto_raw) else "",
+            "VALOR": parse_valor(valor_raw),
+        })
+
+    df = pd.DataFrame(rows, columns=["NOME", "CPF", "POSTO", "VALOR"])
+    return df, {"periodo": None, "total_geral": None, "codigo_mapa": None}
+
+
+
+def _parse_relatorio_va_classico(raw: pd.DataFrame):
+    """
+    Parser do Relatório VA clássico (com separadores 'Posto de Trabalho:',
+    subtotais e rodapé longo).
+    Recebe o DataFrame bruto já lido, para permitir auto-detecção.
+    """
 
     # 1) Achar linha de cabeçalho com NOME e CPF
     header_row = None
@@ -220,6 +315,28 @@ def parse_relatorio_va(file):
 
     df = pd.DataFrame(rows, columns=["NOME", "CPF", "POSTO", "VALOR"])
     return df, meta
+
+
+def parse_relatorio_va(file):
+    """
+    Ponto de entrada público. Lê o arquivo, detecta o formato e chama
+    o parser apropriado.
+
+    Retorna (df_limpo, meta, formato_detectado).
+      - df_limpo: DataFrame com NOME | CPF | POSTO | VALOR
+      - meta: dict com metadados quando disponíveis
+      - formato_detectado: "relatorio_va" | "extrato_beneficios"
+    """
+    raw = read_excel_any(file, sheet_name=0, header=None)
+    fmt = detect_format(raw)
+
+    if fmt == "extrato_beneficios":
+        df, meta = parse_extrato_beneficios(raw)
+    else:
+        df, meta = _parse_relatorio_va_classico(raw)
+
+    return df, meta, fmt
+
 
 
 def aplicar_mapeamento(df: pd.DataFrame, mp: dict) -> pd.DataFrame:
