@@ -2,10 +2,10 @@
 
 <img src="assets/logo.png" alt="LIDER LIMPE" width="140"/>
 
-# Separador de Relatório VA por Contrato
+# Separador de Benefícios por Contrato
 
-**App Streamlit para LIDER LIMPE** — sobe a planilha de Vale Alimentação (VA),
-identifica o **CONTRATO** de cada colaborador pelo posto de trabalho e exporta
+**App Streamlit da LIDER LIMPE** — envie a planilha de benefícios, o app
+identifica o **CONTRATO** de cada colaborador pelo posto de trabalho e gera
 um **ZIP** com uma planilha `.xlsx` por contrato no formato:
 
 ```
@@ -14,7 +14,7 @@ CONTRATO      MM-AAAA.xlsx
 
 [![Streamlit](https://img.shields.io/badge/Streamlit-Cloud-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/cloud)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/Uso-Interno%20LIDER%20LIMPE-1B3A8C)]()
+[![Uso](https://img.shields.io/badge/Uso-Interno%20LIDER%20LIMPE-1B3A8C)]()
 
 </div>
 
@@ -22,161 +22,172 @@ CONTRATO      MM-AAAA.xlsx
 
 ## ✨ O que o app faz
 
-1. Recebe a planilha **Relatório VA** (`.xls` ou `.xlsx`) gerada pelo sistema.
-2. Remove automaticamente:
-   - Linha de cabeçalho original
-   - **Linhas separadoras** de posto (`Posto de Trabalho: XXX`)
-   - **Linhas de subtotal**
-   - **Rodapé** (Período, Empresa, Código/Mapa, Total/Geral, Data/Hora de impressão)
-3. Cruza cada **POSTO TRABALHO** com a planilha **Mapeamento Sistema**
-   (aba `POSTOS`, colunas `Nome_EasyApp → CONTRATO`).
-4. Gera, para cada contrato, uma planilha `.xlsx` com **apenas três colunas**:
-   `NOME | CPF | VALOR` (mais uma linha de **TOTAL**).
-5. Empacota tudo em um único **ZIP**, com nome:
+1. Recebe a planilha enviada (`.xls` ou `.xlsx`) e **detecta o formato
+   automaticamente**:
+   - 📄 **Relatório VA clássico** — remove cabeçalho extra, linhas separadoras
+     (`Posto de Trabalho: XXX`), subtotais e o rodapé (Período, Empresa,
+     Código/Mapa, Total/Geral, Data/Hora).
+   - 📊 **Extrato Mapa Benefícios** (VA + CF + CB consolidado em um único
+     valor) — leitura direta das colunas `Nome do Funcionário | CPF/CNPJ |
+     Posto de Trabalho | Total Benefício (R$)`, removendo a linha
+     `TOTAL GERAL:`.
+2. Cruza cada **Posto de Trabalho** com o **Mapeamento de Postos**
+   (`Nome_EasyApp → CONTRATO`).
+3. Gera, para cada contrato, um `.xlsx` com `NOME | CPF | VALOR` + linha
+   de **TOTAL**.
+   - O arquivo **`SEM_CONTRATO`** (postos ainda não cadastrados no
+     mapeamento) sai com uma coluna extra: `NOME | CPF | POSTO | VALOR`,
+     pra você identificar exatamente quais postos cadastrar.
+4. Empacota tudo num único **ZIP**:
 
-   ```
-   RELATORIO VA POR CONTRATO MM-AAAA.zip
-   └── CONTRATO_A      MM-AAAA.xlsx
-   └── CONTRATO_B      MM-AAAA.xlsx
-   └── ...
-   ```
+```
+RELATORIO VA POR CONTRATO MM-AAAA.zip
+├── SALVAMAR      07-2026.xlsx
+├── CESAN         07-2026.xlsx
+├── SEM_CONTRATO  07-2026.xlsx
+└── ...
+```
 
-> 💡 **Mês/Ano**: por padrão o app sugere o **mês seguinte** ao atual,
-> porque o VA é referente ao próximo mês (ex.: relatório gerado em junho =
-> arquivos com sufixo `07-AAAA`). Você pode trocar manualmente na barra lateral.
+> 💡 **Mês/Ano**: o app sugere automaticamente o **mês seguinte** ao atual,
+> pois o benefício é referente ao próximo mês. Dá pra trocar na barra lateral.
+
+---
+
+## 🗺️ Mapeamento de Postos (3 fontes)
+
+Na barra lateral você escolhe de onde vem o mapeamento `Posto → Contrato`:
+
+| Fonte | Quando usar |
+|---|---|
+| **Google Sheets (automático)** ⭐ padrão | Uso do dia a dia. Lê a aba **POSTOS** da planilha compartilhada — qualquer pessoa que editar lá atualiza o app para todo mundo |
+| Arquivo do repositório | Fallback: usa o `data/Mapeamento Sistema.xls` versionado no GitHub (também serve como contingência automática se o Sheets estiver fora do ar) |
+| Upload manual | Envio pontual de um `.xls`/`.xlsx` só para aquela execução |
+
+### Como atualizar o mapeamento (Google Sheets)
+
+1. Abra a planilha compartilhada e vá até a aba **POSTOS**.
+2. Edite/inclua linhas: `Nome_EasyApp` = nome do posto **exatamente como
+   aparece na planilha de entrada**; `CONTRATO` = nome do contrato que vai
+   para o nome do arquivo.
+3. Salve — o app reflete a mudança em até **1 hora** (cache) ou imediatamente
+   clicando em **🔄 Atualizar mapeamento agora** na barra lateral.
+
+> ⚠️ A planilha precisa estar compartilhada como
+> **"Qualquer pessoa com o link pode ver"** (Arquivo → Compartilhar).
+> Se ficar restrita, o app cai automaticamente para o arquivo do repositório
+> e avisa na tela.
 
 ---
 
 ## 📂 Estrutura do projeto
 
 ```
-lider-va-splitter/
-├── app.py                    ← UI Streamlit (sobe esse arquivo no Streamlit Cloud)
-├── core.py                   ← Lógica de leitura/limpeza/exportação (puro Python)
+SEPARAR-CONTRATOS-BEN/
+├── app.py                       ← UI Streamlit (arquivo principal)
+├── core.py                      ← Lógica (parsing, mapeamento, exportação)
 ├── requirements.txt
+├── .python-version
 ├── README.md
 ├── .gitignore
 ├── .gitattributes
-├── .streamlit/
-│   └── config.toml           ← Tema visual (azul/laranja LIDER LIMPE)
-├── assets/
-│   └── logo.png              ← Logo exibido na barra lateral e no topo
-└── data/
-    └── Mapeamento Sistema.xls   ← Mapeamento POSTO→CONTRATO versionado
+├── .streamlit/config.toml       ← Tema azul/laranja LIDER LIMPE
+├── assets/logo.png
+└── data/Mapeamento Sistema.xls  ← Fallback do mapeamento
 ```
 
 ---
 
 ## 🚀 Como rodar
 
-### Local (Windows / Mac / Linux)
+### Local
 
 ```bash
-# 1. Clone o repositório
-git clone https://github.com/SEU_USUARIO/lider-va-splitter.git
-cd lider-va-splitter
+git clone https://github.com/SEU_USUARIO/SEPARAR-CONTRATOS-BEN.git
+cd SEPARAR-CONTRATOS-BEN
 
-# 2. (opcional) crie um ambiente virtual
 python -m venv .venv
-.\.venv\Scripts\activate          # Windows
-# source .venv/bin/activate       # Mac / Linux
+.\.venv\Scripts\activate        # Windows
+# source .venv/bin/activate     # Mac/Linux
 
-# 3. Instale as dependências
 pip install -r requirements.txt
-
-# 4. Suba o app
 streamlit run app.py
 ```
 
-O app abre em `http://localhost:8501`.
+### Streamlit Community Cloud
 
-### Streamlit Community Cloud (recomendado)
-
-1. Faça **push** deste repositório para o seu GitHub.
+1. Faça **push** do repositório para o GitHub.
 2. Acesse <https://share.streamlit.io> → **New app**.
 3. Aponte para o repositório, branch `main`, arquivo `app.py`.
-4. Pronto — o app fica disponível em uma URL pública.
-
-> Como o `Mapeamento Sistema.xls` está versionado em `data/`, ao subir uma
-> versão nova no GitHub o app passa a usar a nova versão automaticamente.
+4. Pronto — sem secrets, sem credenciais, sem configuração extra.
 
 ---
 
-## 🗂️ Atualizando o Mapeamento Sistema
+## 🧾 Formatos de entrada aceitos
 
-Tem duas formas:
+### A) Relatório VA clássico
 
-### A) Atualizar pelo GitHub (recomendado, fica versionado)
+| NOME | CPF | POSTO TRABALHO | LOTE | VALOR | obs |
+|---|---|---|---|---|---|
+| ANE CAROLINE… | 161.422.807-85 | ADM - LIDER LIMPE | Não informado | 525,14 | |
 
-1. Edite o arquivo `data/Mapeamento Sistema.xls` localmente (ou substitua por uma nova versão).
-2. **Commit + push** para o GitHub.
-3. O app, no próximo carregamento, já lê a nova versão.
+Com linhas `Posto de Trabalho: XXX` entre blocos, `Subtotal:` ao fim de cada
+bloco e rodapé de ~6 linhas (Período, Empresa, Código/Mapa, Total/Geral) —
+tudo descartado automaticamente.
 
-### B) Subir manualmente na hora
+### B) Extrato Mapa Benefícios (VA + CF + CB)
 
-1. Na barra lateral, desligue **“Usar Mapeamento do repositório”**.
-2. Use o uploader para enviar o `.xls`/`.xlsx` daquela execução.
+| Nome do Funcionário | CPF/CNPJ | Posto de Trabalho | Total Benefício (R$) |
+|---|---|---|---|
+| ALAN VITOR… | 194.396.547-16 | ADM - LIDER LIMPE | 525,14 |
 
-> ⚠️ O mapeamento **precisa ter a aba `POSTOS`** com as colunas
-> `Nome_EasyApp` e `CONTRATO`. As demais colunas/abas são ignoradas.
-
----
-
-## 🧾 Formato esperado da Planilha VA de entrada
-
-A planilha precisa seguir o layout do sistema (igual ao `MODELO_TESTE.xls`):
-
-| Coluna A   | Coluna B         | Coluna C        | Coluna D            | Coluna E  | Coluna F     |
-|------------|------------------|-----------------|---------------------|-----------|--------------|
-| **NOME**   | **CPF**          | **POSTO TRABALHO** | **LOTE**         | **VALOR** | _(opcional: obs)_ |
-| ANE CAROLINE…  | 161.422.807-85   | ADM - LIDER LIMPE | Não informado | 525,14   |              |
-| …          | …                | …                 | …             | …        |              |
-
-Entre cada bloco de posto há uma linha tipo `Posto de Trabalho: XXX` e
-no final do bloco uma linha de `Subtotal:` — ambas são **descartadas
-automaticamente**, junto com o rodapé do relatório.
+Com apenas 1 linha de rodapé (`TOTAL GERAL:`), descartada automaticamente.
 
 ---
 
-## 🧪 Resultado gerado
+## 📤 Resultado gerado
 
-Cada arquivo `.xlsx` dentro do ZIP tem **exatamente** este formato:
+Contratos normais:
 
-| NOME                       | CPF         | VALOR     |
-|----------------------------|-------------|-----------|
-| GABRIEL ALMEIDA SANTOS     | 12854998758 | R$ 628,30 |
-| LUCIANO KENG QUEIROZ       | 01716129737 | R$ 505,48 |
-| SAMUEL SOARES DE CARVALHO  | 18271622790 | R$ 628,30 |
-| …                          | …           | …         |
-| **TOTAL**                  |             | **R$ 70.206,36** |
+| NOME | CPF | VALOR |
+|---|---|---|
+| GABRIEL ALMEIDA SANTOS | 12854998758 | R$ 628,30 |
+| **TOTAL** | | **R$ 70.206,36** |
 
-- `CPF` salvo como **texto** (preserva zero à esquerda).
-- `VALOR` formatado como **moeda BRL** com separadores nativos do Excel.
+`SEM_CONTRATO` (com a coluna POSTO para facilitar o cadastro):
+
+| NOME | CPF | POSTO | VALOR |
+|---|---|---|---|
+| ALAN VITOR DOS ANJOS BISPO | 19439654716 | ADM - OPCAO | R$ 525,14 |
+
+- `CPF` salvo como **texto** (preserva zeros à esquerda).
+- `VALOR` formatado como **moeda BRL** nativa do Excel.
 
 ---
 
 ## ⚠️ Postos sem contrato
 
-Se algum posto da planilha de entrada **não tiver** correspondência na coluna
-`Nome_EasyApp` do Mapeamento (ou estiver lá com `CONTRATO` vazio), o app:
+Se algum posto não existir na aba **POSTOS** do mapeamento (ou estiver sem
+`CONTRATO`), o app:
 
-- Exibe um **alerta** com a lista dos postos não encontrados.
-- Agrupa esses colaboradores em um único arquivo **`SEM_CONTRATO      MM-AAAA.xlsx`**.
-- Você pode optar por **não incluir** esse arquivo no ZIP, no checkbox final.
+- Exibe um **alerta** com a lista dos postos faltantes.
+- Agrupa esses colaboradores no arquivo `SEM_CONTRATO      MM-AAAA.xlsx`
+  (com a coluna POSTO).
+- Permite desmarcar a inclusão desse arquivo no ZIP.
 
-> Recomendado: ao ver postos no alerta, **atualize o Mapeamento no GitHub**
-> e rode o app de novo.
+Depois de cadastrar os postos na aba POSTOS do Google Sheets, clique em
+**🔄 Atualizar mapeamento agora** e reprocessa o arquivo.
 
 ---
 
-## 🛠️ Stack técnica
+## 🛠️ Stack
 
-| Camada       | Tecnologia                            |
-|--------------|---------------------------------------|
-| UI           | [Streamlit](https://streamlit.io/)    |
-| Parsing      | `pandas`, `openpyxl`, `xlrd` (legacy .xls) |
-| Geração XLSX | `openpyxl` (estilos + formatação)     |
-| Empacotamento| `zipfile` (stdlib)                    |
+| Camada | Tecnologia |
+|---|---|
+| UI | [Streamlit](https://streamlit.io/) |
+| Parsing | `pandas`, `openpyxl`, `xlrd` (legacy .xls) |
+| Mapeamento | Google Sheets (export CSV público) ou arquivo `.xls` local |
+| Geração XLSX | `openpyxl` |
+| Empacotamento | `zipfile` (stdlib) |
 
 ---
 

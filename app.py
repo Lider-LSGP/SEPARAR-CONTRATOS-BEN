@@ -3,14 +3,16 @@
 ║          LIDER LIMPE — Separador de Relatório VA por Contrato        ║
 ║                                                                      ║
 ║  Fluxo:                                                              ║
-║   1. Carrega a planilha "Relatório VA" enviada pelo usuário          ║
-║   2. Carrega o "Mapeamento Sistema" (do repo ou enviado pelo user)   ║
-║   3. Remove cabeçalho extra, separadores de posto, subtotais e       ║
-║      rodapé do relatório                                             ║
-║   4. Cruza cada POSTO com o mapeamento (Nome_EasyApp → CONTRATO)     ║
-║   5. Gera uma planilha .xlsx por contrato contendo apenas            ║
-║      NOME | CPF | VALOR                                              ║
-║   6. Empacota todas em um único .ZIP no formato:                     ║
+║   1. Carrega a planilha enviada pelo usuário (2 formatos aceitos,    ║
+║      com auto-detecção):                                             ║
+║        • "Relatório VA" clássico (separadores por posto + subtotais) ║
+║        • "Extrato Mapa Benefícios" (VA+CF+CB consolidado)            ║
+║   2. Carrega o Mapeamento de Postos (Google Sheets, repo ou upload)  ║
+║   3. Cruza cada POSTO com o mapeamento (Nome_EasyApp → CONTRATO)     ║
+║   4. Gera uma planilha .xlsx por contrato (NOME | CPF | VALOR)       ║
+║      — o arquivo SEM_CONTRATO inclui a coluna POSTO para facilitar   ║
+║        o cadastro dos postos faltantes                               ║
+║   5. Empacota tudo num .ZIP no formato:                              ║
 ║          "CONTRATO      MM-AAAA.xlsx"                                ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """
@@ -23,6 +25,7 @@ import streamlit as st
 
 from core import (
     carregar_mapeamento,
+    carregar_mapeamento_google_sheets,
     parse_relatorio_va,
     aplicar_mapeamento,
     build_zip,
@@ -44,6 +47,16 @@ MESES_PT = {
 
 def fmt_brl(v: float) -> str:
     return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _carregar_mapeamento_gs_cached():
+    """Cache de 1h do mapeamento vindo do Google Sheets.
+
+    Para forçar atualização imediata após editar a planilha:
+    menu ⋮ do app → 'Clear cache' → Rerun.
+    """
+    return carregar_mapeamento_google_sheets()
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -105,19 +118,29 @@ with st.sidebar:
     if LOGO_PATH.exists():
         st.image(str(LOGO_PATH), use_container_width=True)
     st.markdown("### Mapeamento de Postos")
-    usar_repo = st.toggle(
-        "Usar Mapeamento do repositório",
-        value=DEFAULT_MAP_PATH.exists(),
-        help="Se ligado, usa o arquivo `data/Mapeamento Sistema.xls` versionado no GitHub. "
-             "Para atualizar, suba a nova versão no repositório.",
+    fonte_mapeamento = st.radio(
+        "Fonte do mapeamento",
+        options=["Google Sheets (automático)", "Arquivo do repositório", "Upload manual"],
+        index=0,
+        help=(
+            "Google Sheets: lê direto da planilha compartilhada — edições feitas "
+            "lá refletem aqui em até 1h (ou imediatamente com Clear cache → Rerun).\n"
+            "Repositório: usa o data/Mapeamento Sistema.xls versionado no GitHub.\n"
+            "Upload manual: envia um .xls/.xlsx só para esta execução."
+        ),
     )
     mapeamento_upload = None
-    if not usar_repo:
+    if fonte_mapeamento == "Upload manual":
         mapeamento_upload = st.file_uploader(
             "Envie o Mapeamento Sistema (.xls/.xlsx)",
             type=["xls", "xlsx"],
             key="map_uploader",
         )
+
+    if fonte_mapeamento == "Google Sheets (automático)":
+        if st.button("🔄 Atualizar mapeamento agora", use_container_width=True):
+            _carregar_mapeamento_gs_cached.clear()
+            st.rerun()
 
     st.markdown("---")
     st.markdown("### Mês/Ano de referência")
@@ -161,38 +184,52 @@ with col_title:
         """
         <div class="header-card">
             <h1>Separador de Relatório VA por Contrato</h1>
-            <p>Envie o Relatório VA e baixe um ZIP com uma planilha por contrato — pronto para envio.</p>
+            <p>Envie o Relatório VA ou o Extrato de Benefícios e baixe um ZIP com uma planilha por contrato.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 # ────────── Upload do Relatório ──────────
-st.markdown("#### 1. Envie o Relatório VA")
+st.markdown("#### 1. Envie a planilha")
 relatorio_file = st.file_uploader(
-    "Arraste aqui o arquivo do Relatório VA (.xls ou .xlsx)",
+    "Arraste aqui o Relatório VA ou o Extrato Mapa Benefícios (.xls ou .xlsx)",
     type=["xls", "xlsx"],
     key="rel_uploader",
 )
 
 if not relatorio_file:
-    st.info("⬆️ Envie a planilha do Relatório VA para começar.")
+    st.info("⬆️ Envie a planilha para começar — o formato é detectado automaticamente.")
     st.stop()
 
 # ────────── Carregar mapeamento ──────────
 st.markdown("#### 2. Conferência")
 
 try:
-    if usar_repo:
+    if fonte_mapeamento == "Google Sheets (automático)":
+        try:
+            mp = _carregar_mapeamento_gs_cached()
+            fonte_map = "Google Sheets (atualização automática)"
+        except Exception:
+            # Fallback: se o Sheets estiver inacessível, usa o arquivo do repo
+            if DEFAULT_MAP_PATH.exists():
+                mp = carregar_mapeamento(str(DEFAULT_MAP_PATH))
+                fonte_map = "repositório (fallback — Google Sheets indisponível)"
+                st.warning(
+                    "⚠️ Não consegui ler o Google Sheets agora. "
+                    "Usei o arquivo do repositório como contingência."
+                )
+            else:
+                raise
+    elif fonte_mapeamento == "Arquivo do repositório":
         if not DEFAULT_MAP_PATH.exists():
             st.error(
-                "O arquivo `data/Mapeamento Sistema.xls` não foi encontrado no repositório. "
-                "Desligue *Usar Mapeamento do repositório* e envie o arquivo manualmente."
+                "O arquivo `data/Mapeamento Sistema.xls` não foi encontrado no repositório."
             )
             st.stop()
         mp = carregar_mapeamento(str(DEFAULT_MAP_PATH))
         fonte_map = "repositório (`data/Mapeamento Sistema.xls`)"
-    else:
+    else:  # Upload manual
         if mapeamento_upload is None:
             st.warning("Envie o Mapeamento Sistema no menu lateral.")
             st.stop()
@@ -269,14 +306,16 @@ if not sem_contrato_df.empty:
     postos_orfaos = sorted(sem_contrato_df["POSTO"].dropna().unique().tolist())
     with st.expander(
         f"⚠️ {len(postos_orfaos)} posto(s) sem CONTRATO no Mapeamento "
-        f"({len(sem_contrato_df)} colaborador(es) — irão para `SEM_CONTRATO.xlsx`)",
+        f"({len(sem_contrato_df)} colaborador(es) — irão para `SEM_CONTRATO.xlsx` "
+        "com a coluna POSTO)",
         expanded=True,
     ):
         st.markdown(
             "Estes postos **não foram encontrados** na coluna `Nome_EasyApp` do "
-            "Mapeamento Sistema, ou estão cadastrados sem `CONTRATO`. "
-            "Eles serão agrupados em um arquivo único `SEM_CONTRATO`. "
-            "Considere atualizar o Mapeamento no GitHub."
+            "Mapeamento, ou estão cadastrados sem `CONTRATO`. "
+            "Eles serão agrupados em um arquivo único `SEM_CONTRATO` **com a coluna "
+            "POSTO visível**, para facilitar o cadastro. "
+            "Atualize a aba **POSTOS** no Google Sheets e reprocessa o arquivo."
         )
         st.dataframe(
             pd.DataFrame({"Posto não mapeado": postos_orfaos}),
@@ -332,6 +371,6 @@ if st.button("🗂️  Gerar ZIP com planilhas por contrato", type="primary"):
 st.markdown("---")
 st.caption(
     "© LIDER LIMPE — Ferramenta interna. "
-    "Para atualizar o mapeamento de postos, edite o arquivo "
-    "`data/Mapeamento Sistema.xls` no GitHub."
+    "Mapeamento de postos: edite direto no Google Sheets (aba POSTOS) — "
+    "o app atualiza sozinho em até 1h, ou use o botão 🔄 no menu lateral."
 )

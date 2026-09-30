@@ -2,6 +2,17 @@
 Núcleo de processamento — sem dependência do Streamlit.
 
 Pode ser usado standalone (CLI/scripts) ou pelo app.py.
+
+Fontes de mapeamento suportadas:
+  - Google Sheets (planilha compartilhada, atualização automática) — padrão
+  - Arquivo local no repositório (data/Mapeamento Sistema.xls) — fallback
+  - Upload manual (.xls/.xlsx) — uso pontual
+
+Formatos de planilha de entrada suportados (auto-detectados):
+  - "relatorio_va": Relatório VA clássico (separadores 'Posto de Trabalho:',
+    subtotais, rodapé longo)
+  - "extrato_beneficios": Extrato Mapa Benefícios (VA+CF+CB consolidado,
+    sem separadores, apenas 1 linha de TOTAL GERAL no final)
 """
 
 from __future__ import annotations
@@ -96,14 +107,22 @@ def read_excel_any(file, sheet_name=0, header=None) -> pd.DataFrame:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# Núcleo: parsing do Relatório VA e Mapeamento
+# Mapeamento de Postos → Contrato
 # ════════════════════════════════════════════════════════════════════════
-def carregar_mapeamento(file_or_path) -> dict:
+# Fonte principal: planilha Google Sheets compartilhada (atualização automática).
+# Precisa estar como "Qualquer pessoa com o link pode ver".
+GOOGLE_SHEETS_ID = "1Rn3pYB9uHQysMMfNGgHccJPALDMqf9f4sOYk7MyZaxc"
+GOOGLE_SHEETS_URL = (
+    f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}"
+    f"/gviz/tq?tqx=out:csv&sheet={MAPEAMENTO_SHEET}"
+)
+
+
+def _df_para_dict_mapeamento(df: pd.DataFrame) -> dict:
     """
-    Lê a aba POSTOS do Mapeamento Sistema e devolve dict:
+    Transforma DataFrame do mapeamento em dict:
         { normalize_text(Nome_EasyApp) -> CONTRATO }
     """
-    df = read_excel_any(file_or_path, sheet_name=MAPEAMENTO_SHEET, header=0)
     cols_lower = {c.lower().strip(): c for c in df.columns if isinstance(c, str)}
     col_nome = cols_lower.get("nome_easyapp")
     col_contrato = cols_lower.get("contrato")
@@ -122,12 +141,33 @@ def carregar_mapeamento(file_or_path) -> dict:
         key = normalize_text(nome)
         if not key:
             continue
+        # Se um Nome_EasyApp se repete com contratos diferentes, prevalece o primeiro
         if key not in mp:
             mp[key] = str(contrato).strip()
     return mp
 
 
+def carregar_mapeamento_google_sheets(url: str = GOOGLE_SHEETS_URL) -> dict:
+    """
+    Lê a aba POSTOS diretamente do Google Sheets (export CSV público).
+    Requer que a planilha esteja como 'qualquer pessoa com o link pode ver'.
+    """
+    df = pd.read_csv(url, dtype=str)
+    return _df_para_dict_mapeamento(df)
 
+
+def carregar_mapeamento(file_or_path) -> dict:
+    """
+    Lê a aba POSTOS do Mapeamento Sistema (.xls/.xlsx local ou upload)
+    e devolve dict: { normalize_text(Nome_EasyApp) -> CONTRATO }
+    """
+    df = read_excel_any(file_or_path, sheet_name=MAPEAMENTO_SHEET, header=0)
+    return _df_para_dict_mapeamento(df)
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Núcleo: parsing das planilhas de entrada
+# ════════════════════════════════════════════════════════════════════════
 def detect_format(raw: pd.DataFrame) -> str:
     """
     Auto-detecta o formato da planilha de entrada.
@@ -220,7 +260,6 @@ def parse_extrato_beneficios(raw: pd.DataFrame):
 
     df = pd.DataFrame(rows, columns=["NOME", "CPF", "POSTO", "VALOR"])
     return df, {"periodo": None, "total_geral": None, "codigo_mapa": None}
-
 
 
 def _parse_relatorio_va_classico(raw: pd.DataFrame):
@@ -336,7 +375,6 @@ def parse_relatorio_va(file):
         df, meta = _parse_relatorio_va_classico(raw)
 
     return df, meta, fmt
-
 
 
 def aplicar_mapeamento(df: pd.DataFrame, mp: dict) -> pd.DataFrame:
