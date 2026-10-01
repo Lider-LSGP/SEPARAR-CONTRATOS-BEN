@@ -40,10 +40,20 @@ COR_CINZA = "6C7686"     # cinza secundário
 # Utilidades
 # ════════════════════════════════════════════════════════════════════════
 def normalize_text(s) -> str:
-    """Normaliza string para comparação (sem acento, upper, trim, sem espaços duplos)."""
+    """
+    Normaliza string para comparação (sem acento, upper, trim, sem espaços duplos).
+    Também unifica os vários tipos de traço Unicode (hífen, travessão, en-dash,
+    em-dash, minus...) para o hífen comum, e converte espaços invisíveis
+    (NBSP etc.) em espaço normal — evita falhas de comparação quando o texto
+    foi editado com autocorreção do Word/Google Sheets.
+    """
     if s is None or (isinstance(s, float) and pd.isna(s)):
         return ""
     s = str(s).strip()
+    # Unificar todos os tipos de traço no hífen comum "-"
+    s = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]", "-", s)
+    # Espaços invisíveis (NBSP, thin space, etc.) → espaço normal
+    s = re.sub(r"[\u00A0\u2000-\u200A\u202F\u205F\u3000]", " ", s)
     s = unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("ASCII")
     s = re.sub(r"\s+", " ", s).upper()
     return s
