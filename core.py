@@ -403,19 +403,12 @@ def build_xlsx_contrato(nome_contrato: str, df_contrato: pd.DataFrame) -> bytes:
     """
     Gera .xlsx em memória com estilo + linha de TOTAL.
 
-    - Contratos normais: NOME | CPF | VALOR        (3 colunas)
-    - SEM_CONTRATO:      NOME | CPF | POSTO | VALOR (4 colunas — mostra o
-      posto de cada colaborador para facilitar o cadastro no Mapeamento)
+    Todas as planilhas (contratos normais e SEM_CONTRATO) saem com 5 colunas:
+        MATRICULA | NOME | CPF | POSTO | VALOR
+    A coluna MATRICULA é gerada em branco (reservada para preenchimento manual).
     """
-    # Define se este arquivo é o "SEM_CONTRATO" (mostra coluna POSTO)
-    incluir_posto = (nome_contrato.upper().strip() == "SEM_CONTRATO")
-
-    if incluir_posto:
-        headers = ["NOME", "CPF", "POSTO", "VALOR"]
-        col_valor = 4
-    else:
-        headers = ["NOME", "CPF", "VALOR"]
-        col_valor = 3
+    headers = ["MATRICULA", "NOME", "CPF", "POSTO", "VALOR"]
+    col_valor = 5
     n_cols = len(headers)
 
     wb = Workbook()
@@ -436,35 +429,35 @@ def build_xlsx_contrato(nome_contrato: str, df_contrato: pd.DataFrame) -> bytes:
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = border
 
-    # Linhas de dados
+    # Linhas de dados — MATRICULA sempre em branco
     for _, r in df_contrato.iterrows():
-        if incluir_posto:
-            ws.append([r["NOME"], r["CPF"], r.get("POSTO", ""), r["VALOR"]])
-        else:
-            ws.append([r["NOME"], r["CPF"], r["VALOR"]])
+        ws.append(["", r["NOME"], r["CPF"], r.get("POSTO", ""), r["VALOR"]])
 
     # Formatação das linhas
     last_row = ws.max_row
     for row in range(2, last_row + 1):
-        ws.cell(row=row, column=2).number_format = "@"  # CPF como texto
+        ws.cell(row=row, column=1).number_format = "@"  # MATRICULA como texto
+        ws.cell(row=row, column=3).number_format = "@"  # CPF como texto
         ws.cell(row=row, column=col_valor).number_format = 'R$ #,##0.00;[Red]-R$ #,##0.00'
         for col in range(1, n_cols + 1):
             ws.cell(row=row, column=col).border = border
             if col == 1:
-                align = "left"
+                align = "center"   # MATRICULA
             elif col == 2:
-                align = "center"
+                align = "left"     # NOME
+            elif col == 3:
+                align = "center"   # CPF
             elif col == col_valor:
-                align = "right"
-            else:  # coluna POSTO
-                align = "left"
+                align = "right"    # VALOR
+            else:
+                align = "left"     # POSTO
             ws.cell(row=row, column=col).alignment = Alignment(
                 horizontal=align, vertical="center",
             )
 
     # Linha de TOTAL
     total_row = last_row + 1
-    label_col = col_valor - 1  # célula imediatamente antes do VALOR
+    label_col = col_valor - 1  # célula imediatamente antes do VALOR (POSTO)
     ws.cell(row=total_row, column=label_col, value="TOTAL").font = Font(bold=True)
     ws.cell(row=total_row, column=label_col).alignment = Alignment(horizontal="right")
     for col in range(1, n_cols + 1):
@@ -474,13 +467,11 @@ def build_xlsx_contrato(nome_contrato: str, df_contrato: pd.DataFrame) -> bytes:
     total_cell.number_format = 'R$ #,##0.00'
 
     # Larguras de coluna
-    ws.column_dimensions["A"].width = 45    # NOME
-    ws.column_dimensions["B"].width = 16    # CPF
-    if incluir_posto:
-        ws.column_dimensions["C"].width = 40    # POSTO
-        ws.column_dimensions["D"].width = 16    # VALOR
-    else:
-        ws.column_dimensions["C"].width = 16    # VALOR
+    ws.column_dimensions["A"].width = 14    # MATRICULA
+    ws.column_dimensions["B"].width = 45    # NOME
+    ws.column_dimensions["C"].width = 16    # CPF
+    ws.column_dimensions["D"].width = 40    # POSTO
+    ws.column_dimensions["E"].width = 16    # VALOR
     ws.freeze_panes = "A2"
 
     buf = io.BytesIO()
