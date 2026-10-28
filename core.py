@@ -63,6 +63,8 @@ def normalize_cpf(cpf) -> str:
     """Mantém apenas dígitos do CPF e completa com zeros à esquerda até 11."""
     if cpf is None or (isinstance(cpf, float) and pd.isna(cpf)):
         return ""
+    if isinstance(cpf, (int, float)) and float(cpf).is_integer():
+        cpf = str(int(cpf))
     digits = re.sub(r"\D", "", str(cpf))
     if not digits:
         return ""
@@ -95,25 +97,69 @@ def parse_valor(v):
 
 
 def read_excel_any(file, sheet_name=0, header=None) -> pd.DataFrame:
-    """Lê .xls (xlrd) ou .xlsx (openpyxl) de forma robusta."""
-    name = getattr(file, "name", str(file)).lower()
-    if name.endswith(".xls"):
-        engines = ["xlrd", "openpyxl"]
-    elif name.endswith(".xlsx"):
-        engines = ["openpyxl", "xlrd"]
-    else:
-        engines = ["xlrd", "openpyxl"]
+    """Detecta o formato pelos bytes; lê XLS diretamente com xlrd.
 
-    last_err = None
-    for eng in engines:
+    Nunca tenta abrir um XLS binário como ZIP/XLSX. Uploads são copiados
+    para bytes para não depender da posição do cursor do Streamlit.
+    """
+    if isinstance(file, (str, Path)):
+        data = Path(file).read_bytes()
+    elif isinstance(file, (bytes, bytearray)):
+        data = bytes(file)
+    elif hasattr(file, "getvalue"):
+        data = bytes(file.getvalue())
+    else:
+        file.seek(0)
+        data = file.read()
+    if not data:
+        raise ValueError("O arquivo está vazio. Exporte e envie novamente.")
+
+    ole = data.startswith(bytes.fromhex("D0CF11E0A1B11AE1"))
+    is_zip = zipfile.is_zipfile(io.BytesIO(data))
+    if is_zip:
         try:
-            if hasattr(file, "seek"):
-                file.seek(0)
-            return pd.read_excel(file, sheet_name=sheet_name, header=header, engine=eng)
-        except Exception as e:
-            last_err = e
-            continue
-    raise RuntimeError(f"Não foi possível ler o arquivo Excel. Último erro: {last_err}")
+            return pd.read_excel(io.BytesIO(data), sheet_name=sheet_name,
+                                 header=header, engine="openpyxl")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Falha na leitura do XLSX (openpyxl): {type(exc).__name__}: {exc}"
+            ) from exc
+
+    # XLS OLE ou BIFF antigo: leitura direta, sem a ponte pandas/xlrd.
+    book = None
+    try:
+        import xlrd
+        book = xlrd.open_workbook(file_contents=data, logfile=io.StringIO())
+        sheet = (book.sheet_by_name(sheet_name) if isinstance(sheet_name, str)
+                 else book.sheet_by_index(sheet_name))
+        rows = []
+        for i in range(sheet.nrows):
+            values = []
+            for cell in sheet.row(i):
+                if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+                    values.append(None)
+                elif cell.ctype == xlrd.XL_CELL_NUMBER and float(cell.value).is_integer():
+                    values.append(int(cell.value))
+                else:
+                    values.append(cell.value)
+            rows.append(values)
+        if header is None:
+            return pd.DataFrame(rows, columns=range(sheet.ncols), dtype=object)
+        if not isinstance(header, int) or not 0 <= header < len(rows):
+            raise ValueError("Linha de cabeçalho inválida ou planilha vazia.")
+        columns = [v if v is not None and str(v).strip() else f"Unnamed: {i}"
+                   for i, v in enumerate(rows[header])]
+        return pd.DataFrame(rows[header + 1:], columns=columns, dtype=object)
+    except Exception as exc:
+        tipo = "XLS binário" if ole else "formato não reconhecido como XLSX"
+        raise RuntimeError(
+            f"Falha na leitura do {tipo} (xlrd): {type(exc).__name__}: {exc}. "
+            "Confirme que requirements.txt inclui xlrd==2.0.2. "
+            "Se o erro persistir, salve uma cópia como .xlsx no Excel."
+        ) from exc
+    finally:
+        if book is not None:
+            book.release_resources()
 
 
 # ════════════════════════════════════════════════════════════════════════
