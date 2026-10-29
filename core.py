@@ -115,7 +115,9 @@ def read_excel_any(file, sheet_name=0, header=None) -> pd.DataFrame:
         raise ValueError("O arquivo está vazio. Exporte e envie novamente.")
 
     ole = data.startswith(bytes.fromhex("D0CF11E0A1B11AE1"))
-    is_zip = zipfile.is_zipfile(io.BytesIO(data))
+    # XLS pode conter um ZIP de tema embutido. A assinatura OLE tem
+    # prioridade: is_zipfile sozinho também retorna True nesses arquivos.
+    is_zip = not ole and zipfile.is_zipfile(io.BytesIO(data))
     if is_zip:
         try:
             return pd.read_excel(io.BytesIO(data), sheet_name=sheet_name,
@@ -450,10 +452,10 @@ def build_xlsx_contrato(nome_contrato: str, df_contrato: pd.DataFrame) -> bytes:
     Gera .xlsx em memória com estilo + linha de TOTAL.
 
     Todas as planilhas (contratos normais e SEM_CONTRATO) saem com 5 colunas:
-        MATRICULA | NOME | CPF | POSTO | VALOR
+        matricula | nome | cpf | centrocusto | valor
     A coluna MATRICULA é gerada em branco (reservada para preenchimento manual).
     """
-    headers = ["MATRICULA", "NOME", "CPF", "POSTO", "VALOR"]
+    headers = ["matricula", "nome", "cpf", "centrocusto", "valor"]
     col_valor = 5
     n_cols = len(headers)
 
