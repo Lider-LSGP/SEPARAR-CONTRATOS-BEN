@@ -17,7 +17,8 @@
 ╚══════════════════════════════════════════════════════════════════════╝
 """
 
-from datetime import date
+import re
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -47,6 +48,37 @@ MESES_PT = {
 
 def fmt_brl(v: float) -> str:
     return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def mes_referencia_va(meta: dict, hoje: date):
+    """
+    Calcula o mês/ano de competência do VA: mês SEGUINTE ao fechamento do
+    período do relatório.
+
+        Período "21/09/2026 - 20/10/2026"  ->  11/2026
+        Período "21/12/2026 - 20/01/2027"  ->  02/2027
+
+    Se o período não for identificável (ex.: Extrato consolidado), usa o mês
+    atual. Retorna (mes, ano, origem_da_sugestao).
+    """
+    periodo = str((meta or {}).get("periodo") or "")
+    datas = re.findall(r"\d{2}/\d{2}/\d{4}", periodo)
+    if datas:
+        try:
+            fim = datetime.strptime(datas[-1], "%d/%m/%Y").date()
+        except ValueError:
+            fim = None
+        if fim is not None:
+            mes, ano = fim.month + 1, fim.year
+            if mes > 12:
+                mes, ano = 1, ano + 1
+            return (
+                mes,
+                ano,
+                "mês seguinte ao fim do período do relatório "
+                f"({fim.strftime('%d/%m/%Y')})",
+            )
+    return hoje.month, hoje.year, "mês atual (período não identificado no relatório)"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -143,35 +175,10 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
-    st.markdown("### Mês/Ano de referência")
     st.caption(
-        "Por convenção, o VA é referente ao **mês posterior** ao mês de impressão "
-        "do relatório."
-    )
-    hoje = date.today()
-    prox_mes = hoje.month + 1
-    prox_ano = hoje.year
-    if prox_mes > 12:
-        prox_mes, prox_ano = 1, prox_ano + 1
-    col_m, col_a = st.columns(2)
-    with col_m:
-        mes = st.selectbox(
-            "Mês",
-            options=list(range(1, 13)),
-            index=prox_mes - 1,
-            format_func=lambda m: f"{m:02d} — {MESES_PT[m]}",
-        )
-    with col_a:
-        ano = st.number_input(
-            "Ano",
-            min_value=2020, max_value=2099,
-            value=prox_ano, step=1, format="%d",
-        )
-
-    st.markdown("---")
-    st.caption(
-        f"Arquivos terão o sufixo **`{mes:02d}-{ano:04d}`** "
-        f"(ex.: `SALVAMAR      {mes:02d}-{ano:04d}.xlsx`)."
+        "O **mês/ano de referência** é sugerido no passo 4, a partir do "
+        "período do relatório enviado (mês seguinte ao fechamento). "
+        "Você pode ajustar antes de gerar os arquivos."
     )
 
 # ────────── Header ──────────
@@ -340,7 +347,34 @@ with st.expander("👀 Pré-visualizar dados consolidados (após limpeza)"):
     st.dataframe(df, use_container_width=True, hide_index=True, height=320)
 
 # ────────── Gerar ZIP ──────────
-st.markdown("#### 4. Gerar arquivos")
+st.markdown("#### 4. Mês/ano de referência e geração dos arquivos")
+
+_mes_sugerido, _ano_sugerido, _origem_mes = mes_referencia_va(meta, date.today())
+st.caption(
+    f"Mês/ano sugerido: **{_mes_sugerido:02d}-{_ano_sugerido:04d}** "
+    f"({_origem_mes}). Ajuste abaixo se necessário."
+)
+col_m, col_a = st.columns(2)
+with col_m:
+    mes = st.selectbox(
+        "Mês de referência",
+        options=list(range(1, 13)),
+        index=_mes_sugerido - 1,
+        format_func=lambda m: f"{m:02d} — {MESES_PT[m]}",
+        key="mes_competencia",
+    )
+with col_a:
+    ano = st.number_input(
+        "Ano de referência",
+        min_value=2020, max_value=2099,
+        value=_ano_sugerido, step=1, format="%d",
+        key="ano_competencia",
+    )
+st.caption(
+    f"Arquivos terão o sufixo **`{mes:02d}-{ano:04d}`** "
+    f"(ex.: `SALVAMAR      {mes:02d}-{ano:04d}.xlsx`)."
+)
+
 incluir_orfaos = st.checkbox(
     "Incluir arquivo `SEM_CONTRATO` no ZIP",
     value=True,
